@@ -1,0 +1,622 @@
+name: Build KeyMapper APK
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        run: |
+          export ANDROID_HOME=/usr/local/lib/android/sdk
+          export ANDROID_SDK_ROOT=$ANDROID_HOME
+          echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
+          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> $GITHUB_PATH
+          echo "$ANDROID_HOME/platform-tools" >> $GITHUB_PATH
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
+          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+
+      - name: Create project files
+        run: |
+          mkdir -p app/src/main/java/com/example/keymapper
+          mkdir -p app/src/main/res/values
+          mkdir -p app/src/main/res/xml
+          mkdir -p app/src/main/res/drawable
+
+          cat > settings.gradle << 'EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "KeyMapper"
+          include ':app'
+          EOF
+
+          cat > build.gradle << 'EOF'
+          plugins {
+              id 'com.android.application' version '8.5.0' apply false
+          }
+          EOF
+
+          cat > gradle.properties << 'EOF'
+          android.useAndroidX=true
+          android.enableJetifier=true
+          org.gradle.jvmargs=-Xmx2048m
+          EOF
+
+          cat > app/build.gradle << 'EOF'
+          plugins {
+              id 'com.android.application'
+          }
+          android {
+              namespace 'com.example.keymapper'
+              compileSdk 34
+              defaultConfig {
+                  applicationId "com.example.keymapper"
+                  minSdk 28
+                  targetSdk 34
+                  versionCode 1
+                  versionName "1.0"
+              }
+              buildTypes {
+                  release { minifyEnabled false }
+              }
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_17
+                  targetCompatibility JavaVersion.VERSION_17
+              }
+          }
+          configurations.all {
+              exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk7'
+              exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk8'
+          }
+          dependencies {
+              implementation 'androidx.appcompat:appcompat:1.7.0'
+          }
+          EOF
+
+          cat > app/src/main/AndroidManifest.xml << 'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+              <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+              <application
+                  android:label="KeyMapper"
+                  android:icon="@drawable/ic_launcher"
+                  android:theme="@style/Theme.AppCompat.Light.NoActionBar">
+
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:label="KeyMapper Setup">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+
+                  <service
+                      android:name=".OverlayService"
+                      android:exported="false"
+                      android:foregroundServiceType="specialUse">
+                      <property
+                          android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                          android:value="overlay_control" />
+                  </service>
+
+                  <service
+                      android:name=".KeyMapperService"
+                      android:label="KeyMapper"
+                      android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.accessibilityservice.AccessibilityService" />
+                      </intent-filter>
+                      <meta-data
+                          android:name="android.accessibilityservice"
+                          android:resource="@xml/accessibility_service_config" />
+                  </service>
+              </application>
+          </manifest>
+          EOF
+
+          cat > app/src/main/res/xml/accessibility_service_config.xml << 'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+              android:accessibilityEventTypes="typeAllMask"
+              android:accessibilityFeedbackType="feedbackGeneric"
+              android:accessibilityFlags="flagRequestFilterKeyEvents"
+              android:canPerformGestures="true"
+              android:canRequestFilterKeyEvents="true"
+              android:notificationTimeout="100"
+              android:description="@string/accessibility_description" />
+          EOF
+
+          cat > app/src/main/res/values/strings.xml << 'EOF'
+          <resources>
+              <string name="app_name">KeyMapper</string>
+              <string name="accessibility_description">Keyboard key press ko touch tap me convert karne ke liye permission.</string>
+          </resources>
+          EOF
+
+          cat > app/src/main/res/drawable/ic_launcher.xml << 'EOF'
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="108dp"
+              android:height="108dp"
+              android:viewportWidth="108"
+              android:viewportHeight="108">
+              <path android:fillColor="#0F172A" android:pathData="M0,0h108v108h-108z" />
+              <path android:fillColor="#38BDF8" android:pathData="M20,42h68v24h-68z" />
+              <path android:fillColor="#0F172A" android:pathData="M30,50h8v8h-8zM44,50h8v8h-8zM58,50h8v8h-8zM72,50h6v8h-6z" />
+              <path android:fillColor="#38BDF8" android:pathData="M46,74h16v6h-16z" />
+          </vector>
+          EOF
+
+          cat > app/src/main/java/com/example/keymapper/MappingStore.java << 'EOF'
+          package com.example.keymapper;
+
+          import android.content.Context;
+          import android.content.SharedPreferences;
+          import org.json.JSONArray;
+          import org.json.JSONObject;
+          import java.util.ArrayList;
+          import java.util.LinkedHashMap;
+          import java.util.List;
+          import java.util.Map;
+
+          public class MappingStore {
+              public static class KeyMapping {
+                  public int keyCode;
+                  public float x;
+                  public float y;
+                  public KeyMapping(int keyCode, float x, float y) {
+                      this.keyCode = keyCode;
+                      this.x = x;
+                      this.y = y;
+                  }
+              }
+
+              private static final Map<Integer, KeyMapping> mappings = new LinkedHashMap<>();
+
+              public static KeyMapping get(int keyCode) { return mappings.get(keyCode); }
+              public static void put(KeyMapping m) { mappings.put(m.keyCode, m); }
+              public static List<KeyMapping> all() { return new ArrayList<>(mappings.values()); }
+              public static void clear() { mappings.clear(); }
+
+              public static void save(Context ctx) {
+                  try {
+                      JSONArray arr = new JSONArray();
+                      for (KeyMapping m : mappings.values()) {
+                          JSONObject o = new JSONObject();
+                          o.put("keyCode", m.keyCode);
+                          o.put("x", m.x);
+                          o.put("y", m.y);
+                          arr.put(o);
+                      }
+                      ctx.getSharedPreferences("keymapper", Context.MODE_PRIVATE)
+                          .edit().putString("mappings", arr.toString()).apply();
+                  } catch (Exception e) { }
+              }
+
+              public static void load(Context ctx) {
+                  mappings.clear();
+                  try {
+                      SharedPreferences sp = ctx.getSharedPreferences("keymapper", Context.MODE_PRIVATE);
+                      String json = sp.getString("mappings", null);
+                      if (json == null) return;
+                      JSONArray arr = new JSONArray(json);
+                      for (int i = 0; i < arr.length(); i++) {
+                          JSONObject o = arr.getJSONObject(i);
+                          KeyMapping m = new KeyMapping(o.getInt("keyCode"),
+                              (float) o.getDouble("x"), (float) o.getDouble("y"));
+                          mappings.put(m.keyCode, m);
+                      }
+                  } catch (Exception e) { }
+              }
+          }
+          EOF
+
+          cat > app/src/main/java/com/example/keymapper/KeyMapperService.java << 'EOF'
+          package com.example.keymapper;
+
+          import android.accessibilityservice.AccessibilityService;
+          import android.accessibilityservice.AccessibilityServiceInfo;
+          import android.accessibilityservice.GestureDescription;
+          import android.graphics.Path;
+          import android.view.KeyEvent;
+          import android.view.accessibility.AccessibilityEvent;
+
+          public class KeyMapperService extends AccessibilityService {
+              private static KeyMapperService instance;
+              public static KeyMapperService getInstance() { return instance; }
+
+              @Override
+              protected void onServiceConnected() {
+                  super.onServiceConnected();
+                  instance = this;
+                  AccessibilityServiceInfo info = getServiceInfo();
+                  if (info != null) {
+                      info.flags |= AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS;
+                      setServiceInfo(info);
+                  }
+              }
+
+              @Override
+              public boolean onUnbind(android.content.Intent intent) {
+                  instance = null;
+                  return super.onUnbind(intent);
+              }
+
+              @Override
+              public void onDestroy() { instance = null; super.onDestroy(); }
+
+              @Override
+              public void onAccessibilityEvent(AccessibilityEvent event) { }
+
+              @Override
+              public void onInterrupt() { }
+
+              @Override
+              protected boolean onKeyEvent(KeyEvent event) {
+                  MappingStore.KeyMapping m = MappingStore.get(event.getKeyCode());
+                  if (m == null) return false;
+                  if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                      tap(m.x, m.y);
+                  }
+                  return true;
+              }
+
+              private void tap(float x, float y) {
+                  Path path = new Path();
+                  path.moveTo(x, y);
+                  GestureDescription.StrokeDescription stroke =
+                      new GestureDescription.StrokeDescription(path, 0L, 60L);
+                  GestureDescription gesture = new GestureDescription.Builder()
+                      .addStroke(stroke).build();
+                  dispatchGesture(gesture, null, null);
+              }
+          }
+          EOF
+
+          cat > app/src/main/java/com/example/keymapper/OverlayService.java << 'EOF'
+          package com.example.keymapper;
+
+          import android.app.AlertDialog;
+          import android.app.Notification;
+          import android.app.NotificationChannel;
+          import android.app.NotificationManager;
+          import android.app.Service;
+          import android.content.Intent;
+          import android.content.pm.ServiceInfo;
+          import android.graphics.Color;
+          import android.graphics.PixelFormat;
+          import android.os.Build;
+          import android.os.IBinder;
+          import android.text.InputType;
+          import android.view.Gravity;
+          import android.view.MotionEvent;
+          import android.view.View;
+          import android.view.WindowManager;
+          import android.widget.Button;
+          import android.widget.EditText;
+          import android.widget.FrameLayout;
+          import android.widget.LinearLayout;
+          import android.widget.TextView;
+
+          public class OverlayService extends Service {
+              private WindowManager wm;
+              private FrameLayout root;
+              private boolean editMode = true;
+              private Button toggleBtn;
+
+              @Override
+              public void onCreate() {
+                  super.onCreate();
+                  wm = (WindowManager) getSystemService(WINDOW_SERVICE);
+                  startForegroundSafe();
+                  MappingStore.load(this);
+                  buildOverlay();
+              }
+
+              private void startForegroundSafe() {
+                  String ch = "keymapper_channel";
+                  NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                      nm.createNotificationChannel(new NotificationChannel(
+                          ch, "KeyMapper", NotificationManager.IMPORTANCE_LOW));
+                  }
+                  Notification notif;
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                      notif = new Notification.Builder(this, ch)
+                          .setContentTitle("KeyMapper")
+                          .setContentText("Overlay active")
+                          .setSmallIcon(android.R.drawable.ic_menu_compass)
+                          .setOngoing(true)
+                          .build();
+                  } else {
+                      notif = new Notification.Builder(this)
+                          .setContentTitle("KeyMapper")
+                          .setSmallIcon(android.R.drawable.ic_menu_compass)
+                          .build();
+                  }
+                  if (Build.VERSION.SDK_INT >= 34) {
+                      startForeground(1, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
+                  } else {
+                      startForeground(1, notif);
+                  }
+              }
+
+              private void buildOverlay() {
+                  root = new FrameLayout(this);
+
+                  LinearLayout bar = new LinearLayout(this);
+                  bar.setOrientation(LinearLayout.HORIZONTAL);
+                  bar.setBackgroundColor(Color.argb(200, 0, 0, 0));
+                  bar.setPadding(16, 16, 16, 16);
+
+                  Button addBtn = new Button(this);
+                  addBtn.setText("+ Add Key");
+                  addBtn.setOnClickListener(v -> showAddDialog());
+                  bar.addView(addBtn);
+
+                  toggleBtn = new Button(this);
+                  toggleBtn.setText("Play Mode");
+                  toggleBtn.setOnClickListener(v -> {
+                      editMode = !editMode;
+                      toggleBtn.setText(editMode ? "Play Mode" : "Edit Mode");
+                      applyEditMode();
+                  });
+                  bar.addView(toggleBtn);
+
+                  Button exitBtn = new Button(this);
+                  exitBtn.setText("Exit");
+                  exitBtn.setOnClickListener(v -> stopSelf());
+                  bar.addView(exitBtn);
+
+                  FrameLayout.LayoutParams barParams = new FrameLayout.LayoutParams(
+                      FrameLayout.LayoutParams.WRAP_CONTENT,
+                      FrameLayout.LayoutParams.WRAP_CONTENT);
+                  barParams.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
+                  barParams.topMargin = 20;
+                  root.addView(bar, barParams);
+
+                  for (MappingStore.KeyMapping m : MappingStore.all()) {
+                      addButtonView(m);
+                  }
+                  applyEditMode();
+
+                  WindowManager.LayoutParams params = new WindowManager.LayoutParams(
+                      WindowManager.LayoutParams.MATCH_PARENT,
+                      WindowManager.LayoutParams.MATCH_PARENT,
+                      WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                      WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+                      PixelFormat.TRANSLUCENT);
+                  params.gravity = Gravity.TOP | Gravity.START;
+                  wm.addView(root, params);
+              }
+
+              private void applyEditMode() {
+                  if (root == null) return;
+                  // Keep overlay touchable always so user can toggle back.
+                  // In play mode, key buttons don't consume touches (their onTouch returns false),
+                  // so touches fall through to game for most games.
+                  for (int i = 0; i < root.getChildCount(); i++) {
+                      View v = root.getChildAt(i);
+                      if (v instanceof TextView && v.getTag() instanceof MappingStore.KeyMapping) {
+                          v.setAlpha(editMode ? 1f : 0.35f);
+                      }
+                  }
+              }
+
+              private void showAddDialog() {
+                  EditText input = new EditText(this);
+                  input.setHint("Key code (Space=62, A=29, Shift=59)");
+                  input.setInputType(InputType.TYPE_CLASS_NUMBER);
+                  new AlertDialog.Builder(this)
+                      .setTitle("Add Key Mapping")
+                      .setView(input)
+                      .setPositiveButton("Add", (d, w) -> {
+                          String s = input.getText().toString().trim();
+                          if (s.isEmpty()) return;
+                          int kc;
+                          try { kc = Integer.parseInt(s); } catch (Exception e) { return; }
+                          float cx = root.getWidth() / 2f;
+                          float cy = root.getHeight() / 2f;
+                          MappingStore.KeyMapping m = new MappingStore.KeyMapping(kc, cx, cy);
+                          MappingStore.put(m);
+                          addButtonView(m);
+                          MappingStore.save(this);
+                      })
+                      .setNegativeButton("Cancel", null)
+                      .show();
+              }
+
+              private void addButtonView(MappingStore.KeyMapping mapping) {
+                  TextView tv = new TextView(this);
+                  tv.setText("K" + mapping.keyCode);
+                  tv.setBackgroundColor(Color.argb(180, 255, 100, 100));
+                  tv.setPadding(30, 30, 30, 30);
+                  tv.setTextSize(16f);
+                  tv.setTextColor(Color.WHITE);
+                  tv.setTag(mapping);
+
+                  FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
+                      FrameLayout.LayoutParams.WRAP_CONTENT,
+                      FrameLayout.LayoutParams.WRAP_CONTENT);
+                  root.addView(tv, params);
+
+                  tv.post(() -> {
+                      tv.setX(mapping.x - tv.getWidth() / 2f);
+                      tv.setY(mapping.y - tv.getHeight() / 2f);
+                  });
+
+                  tv.setOnTouchListener(new View.OnTouchListener() {
+                      float dx, dy;
+                      @Override
+                      public boolean onTouch(View v, MotionEvent ev) {
+                          if (!editMode) return false;
+                          switch (ev.getAction()) {
+                              case MotionEvent.ACTION_DOWN:
+                                  dx = v.getX() - ev.getRawX();
+                                  dy = v.getY() - ev.getRawY();
+                                  return true;
+                              case MotionEvent.ACTION_MOVE:
+                                  v.setX(ev.getRawX() + dx);
+                                  v.setY(ev.getRawY() + dy);
+                                  return true;
+                              case MotionEvent.ACTION_UP:
+                                  mapping.x = v.getX() + v.getWidth() / 2f;
+                                  mapping.y = v.getY() + v.getHeight() / 2f;
+                                  MappingStore.save(OverlayService.this);
+                                  return true;
+                          }
+                          return false;
+                      }
+                  });
+              }
+
+              @Override
+              public void onDestroy() {
+                  super.onDestroy();
+                  if (root != null && wm != null) {
+                      try { wm.removeView(root); } catch (Exception e) { }
+                  }
+              }
+
+              @Override
+              public IBinder onBind(Intent intent) { return null; }
+          }
+          EOF
+
+          cat > app/src/main/java/com/example/keymapper/MainActivity.java << 'EOF'
+          package com.example.keymapper;
+
+          import android.content.Intent;
+          import android.net.Uri;
+          import android.os.Bundle;
+          import android.provider.Settings;
+          import android.widget.Button;
+          import android.widget.LinearLayout;
+          import android.widget.ScrollView;
+          import android.widget.TextView;
+          import android.widget.Toast;
+          import androidx.appcompat.app.AppCompatActivity;
+
+          public class MainActivity extends AppCompatActivity {
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+
+                  LinearLayout layout = new LinearLayout(this);
+                  layout.setOrientation(LinearLayout.VERTICAL);
+                  layout.setPadding(48, 48, 48, 48);
+
+                  TextView title = new TextView(this);
+                  title.setText("KeyMapper - Setup");
+                  title.setTextSize(22f);
+                  title.setPadding(0, 0, 0, 32);
+                  layout.addView(title);
+
+                  Button b1 = new Button(this);
+                  b1.setText("1. Grant Overlay Permission");
+                  b1.setOnClickListener(v -> {
+                      if (!Settings.canDrawOverlays(MainActivity.this)) {
+                          startActivity(new Intent(
+                              Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                              Uri.parse("package:" + getPackageName())));
+                      } else {
+                          Toast.makeText(this, "Already granted", Toast.LENGTH_SHORT).show();
+                      }
+                  });
+                  layout.addView(b1);
+
+                  Button b2 = new Button(this);
+                  b2.setText("2. Enable Accessibility Service");
+                  b2.setOnClickListener(v ->
+                      startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
+                  layout.addView(b2);
+
+                  Button b3 = new Button(this);
+                  b3.setText("3. Start Overlay");
+                  b3.setOnClickListener(v -> {
+                      if (!Settings.canDrawOverlays(MainActivity.this)) {
+                          Toast.makeText(this, "Grant overlay first", Toast.LENGTH_SHORT).show();
+                          return;
+                      }
+                      if (KeyMapperService.getInstance() == null) {
+                          Toast.makeText(this, "Enable accessibility first", Toast.LENGTH_SHORT).show();
+                          return;
+                      }
+                      startForegroundService(new Intent(this, OverlayService.class));
+                  });
+                  layout.addView(b3);
+
+                  Button b4 = new Button(this);
+                  b4.setText("4. Stop Overlay");
+                  b4.setOnClickListener(v ->
+                      stopService(new Intent(this, OverlayService.class)));
+                  layout.addView(b4);
+
+                  TextView help = new TextView(this);
+                  help.setText("\nHow to use:\n" +
+                      "1. Grant both permissions above\n" +
+                      "2. Start overlay\n" +
+                      "3. Open your game\n" +
+                      "4. '+ Add Key' -> key code daalo (Space=62, A=29, Shift=59)\n" +
+                      "5. Button ko drag karke game button ke upar rakho\n" +
+                      "6. 'Play Mode' toggle karo\n" +
+                      "7. Ab keyboard se mapped key dabao -> screen tap hoga\n\n" +
+                      "Common keycodes:\n" +
+                      "Space=62, Enter=66, Shift=59\n" +
+                      "A=29, B=30, C=31, D=32, E=33, F=34\n" +
+                      "1=8, 2=9, 3=10, 4=11, 5=12\n\n" +
+                      "Warning: Free Fire / BGMI jaise games\n" +
+                      "keymapper ko cheat maan kar account ban kar sakte hain.\n" +
+                      "Apne risk pe use karo.");
+                  help.setTextSize(13f);
+                  layout.addView(help);
+
+                  setContentView(new ScrollView(this) {{ addView(layout); }});
+              }
+          }
+          EOF
+
+      - name: Build Debug APK
+        run: gradle assembleDebug --no-daemon --stacktrace
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: KeyMapper-APK
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
