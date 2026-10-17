@@ -83,7 +83,7 @@ jobs:
                   minSdk 28
                   targetSdk 34
                   versionCode 1
-                  versionName "1.0"
+                  versionName "1.1"
               }
               buildTypes {
                   release { minifyEnabled false }
@@ -158,6 +158,7 @@ jobs:
               android:accessibilityFlags="flagRequestFilterKeyEvents"
               android:canPerformGestures="true"
               android:canRequestFilterKeyEvents="true"
+              android:canRetrieveWindowContent="true"
               android:notificationTimeout="100"
               android:description="@string/accessibility_description" />
           EOF
@@ -171,10 +172,7 @@ jobs:
 
           cat > app/src/main/res/drawable/ic_launcher.xml << 'EOF'
           <vector xmlns:android="http://schemas.android.com/apk/res/android"
-              android:width="108dp"
-              android:height="108dp"
-              android:viewportWidth="108"
-              android:viewportHeight="108">
+              android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
               <path android:fillColor="#0F172A" android:pathData="M0,0h108v108h-108z" />
               <path android:fillColor="#38BDF8" android:pathData="M20,42h68v24h-68z" />
               <path android:fillColor="#0F172A" android:pathData="M30,50h8v8h-8zM44,50h8v8h-8zM58,50h8v8h-8zM72,50h6v8h-6z" />
@@ -211,7 +209,6 @@ jobs:
               public static KeyMapping get(int keyCode) { return mappings.get(keyCode); }
               public static void put(KeyMapping m) { mappings.put(m.keyCode, m); }
               public static List<KeyMapping> all() { return new ArrayList<>(mappings.values()); }
-              public static void clear() { mappings.clear(); }
 
               public static void save(Context ctx) {
                   try {
@@ -311,7 +308,6 @@ jobs:
           cat > app/src/main/java/com/example/keymapper/OverlayService.java << 'EOF'
           package com.example.keymapper;
 
-          import android.app.AlertDialog;
           import android.app.Notification;
           import android.app.NotificationChannel;
           import android.app.NotificationManager;
@@ -361,13 +357,11 @@ jobs:
                           .setContentTitle("KeyMapper")
                           .setContentText("Overlay active")
                           .setSmallIcon(android.R.drawable.ic_menu_compass)
-                          .setOngoing(true)
-                          .build();
+                          .setOngoing(true).build();
                   } else {
                       notif = new Notification.Builder(this)
                           .setContentTitle("KeyMapper")
-                          .setSmallIcon(android.R.drawable.ic_menu_compass)
-                          .build();
+                          .setSmallIcon(android.R.drawable.ic_menu_compass).build();
                   }
                   if (Build.VERSION.SDK_INT >= 34) {
                       startForeground(1, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
@@ -386,7 +380,7 @@ jobs:
 
                   Button addBtn = new Button(this);
                   addBtn.setText("+ Add Key");
-                  addBtn.setOnClickListener(v -> showAddDialog());
+                  addBtn.setOnClickListener(v -> showAddKeyPopup());
                   bar.addView(addBtn);
 
                   toggleBtn = new Button(this);
@@ -404,8 +398,7 @@ jobs:
                   bar.addView(exitBtn);
 
                   FrameLayout.LayoutParams barParams = new FrameLayout.LayoutParams(
-                      FrameLayout.LayoutParams.WRAP_CONTENT,
-                      FrameLayout.LayoutParams.WRAP_CONTENT);
+                      FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT);
                   barParams.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
                   barParams.topMargin = 20;
                   root.addView(bar, barParams);
@@ -416,20 +409,15 @@ jobs:
                   applyEditMode();
 
                   WindowManager.LayoutParams params = new WindowManager.LayoutParams(
-                      WindowManager.LayoutParams.MATCH_PARENT,
-                      WindowManager.LayoutParams.MATCH_PARENT,
+                      WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT,
                       WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-                      WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
-                      PixelFormat.TRANSLUCENT);
+                      WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, PixelFormat.TRANSLUCENT);
                   params.gravity = Gravity.TOP | Gravity.START;
                   wm.addView(root, params);
               }
 
               private void applyEditMode() {
                   if (root == null) return;
-                  // Keep overlay touchable always so user can toggle back.
-                  // In play mode, key buttons don't consume touches (their onTouch returns false),
-                  // so touches fall through to game for most games.
                   for (int i = 0; i < root.getChildCount(); i++) {
                       View v = root.getChildAt(i);
                       if (v instanceof TextView && v.getTag() instanceof MappingStore.KeyMapping) {
@@ -438,27 +426,66 @@ jobs:
                   }
               }
 
-              private void showAddDialog() {
+              // FIXED: Replaced AlertDialog with WindowManager Custom Popup
+              private void showAddKeyPopup() {
+                  final FrameLayout popup = new FrameLayout(this);
+                  popup.setBackgroundColor(Color.argb(240, 30, 30, 30));
+                  popup.setPadding(40, 40, 40, 40);
+
+                  LinearLayout layout = new LinearLayout(this);
+                  layout.setOrientation(LinearLayout.VERTICAL);
+
+                  TextView title = new TextView(this);
+                  title.setText("Enter Key Code\n(Space=62, A=29, Shift=59)");
+                  title.setTextColor(Color.WHITE);
+                  title.setTextSize(18f);
+                  layout.addView(title);
+
                   EditText input = new EditText(this);
-                  input.setHint("Key code (Space=62, A=29, Shift=59)");
+                  input.setHint("Key code number");
+                  input.setTextColor(Color.WHITE);
+                  input.setHintTextColor(Color.GRAY);
                   input.setInputType(InputType.TYPE_CLASS_NUMBER);
-                  new AlertDialog.Builder(this)
-                      .setTitle("Add Key Mapping")
-                      .setView(input)
-                      .setPositiveButton("Add", (d, w) -> {
-                          String s = input.getText().toString().trim();
-                          if (s.isEmpty()) return;
-                          int kc;
-                          try { kc = Integer.parseInt(s); } catch (Exception e) { return; }
-                          float cx = root.getWidth() / 2f;
-                          float cy = root.getHeight() / 2f;
-                          MappingStore.KeyMapping m = new MappingStore.KeyMapping(kc, cx, cy);
-                          MappingStore.put(m);
-                          addButtonView(m);
-                          MappingStore.save(this);
-                      })
-                      .setNegativeButton("Cancel", null)
-                      .show();
+                  layout.addView(input);
+
+                  LinearLayout btnRow = new LinearLayout(this);
+                  btnRow.setOrientation(LinearLayout.HORIZONTAL);
+
+                  Button btnCancel = new Button(this);
+                  btnCancel.setText("Cancel");
+                  btnCancel.setOnClickListener(v -> wm.removeView(popup));
+                  btnRow.addView(btnCancel);
+
+                  Button btnAdd = new Button(this);
+                  btnAdd.setText("Add");
+                  btnAdd.setOnClickListener(v -> {
+                      String s = input.getText().toString().trim();
+                      if (!s.isEmpty()) {
+                          try {
+                              int kc = Integer.parseInt(s);
+                              float cx = root.getWidth() / 2f;
+                              float cy = root.getHeight() / 2f;
+                              MappingStore.KeyMapping m = new MappingStore.KeyMapping(kc, cx, cy);
+                              MappingStore.put(m);
+                              addButtonView(m);
+                              MappingStore.save(OverlayService.this);
+                          } catch (Exception e) {}
+                      }
+                      wm.removeView(popup);
+                  });
+                  btnRow.addView(btnAdd);
+
+                  layout.addView(btnRow);
+                  popup.addView(layout);
+
+                  WindowManager.LayoutParams params = new WindowManager.LayoutParams(
+                      WindowManager.LayoutParams.WRAP_CONTENT,
+                      WindowManager.LayoutParams.WRAP_CONTENT,
+                      WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                      WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+                      PixelFormat.TRANSLUCENT);
+                  params.gravity = Gravity.CENTER;
+                  wm.addView(popup, params);
               }
 
               private void addButtonView(MappingStore.KeyMapping mapping) {
@@ -471,8 +498,7 @@ jobs:
                   tv.setTag(mapping);
 
                   FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
-                      FrameLayout.LayoutParams.WRAP_CONTENT,
-                      FrameLayout.LayoutParams.WRAP_CONTENT);
+                      FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT);
                   root.addView(tv, params);
 
                   tv.post(() -> {
@@ -551,8 +577,7 @@ jobs:
                   b1.setText("1. Grant Overlay Permission");
                   b1.setOnClickListener(v -> {
                       if (!Settings.canDrawOverlays(MainActivity.this)) {
-                          startActivity(new Intent(
-                              Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                          startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
                               Uri.parse("package:" + getPackageName())));
                       } else {
                           Toast.makeText(this, "Already granted", Toast.LENGTH_SHORT).show();
@@ -566,9 +591,22 @@ jobs:
                       startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
                   layout.addView(b2);
 
+                  // NEW: Fix for Android 13+ "Restricted Settings"
                   Button b3 = new Button(this);
-                  b3.setText("3. Start Overlay");
+                  b3.setText("3. Fix 'Restricted Settings' (Android 13+)");
                   b3.setOnClickListener(v -> {
+                      try {
+                          Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+                          intent.setData(Uri.parse("package:" + getPackageName()));
+                          startActivity(intent);
+                          Toast.makeText(this, "3-Dots -> Allow restricted settings", Toast.LENGTH_LONG).show();
+                      } catch (Exception e) {}
+                  });
+                  layout.addView(b3);
+
+                  Button b4 = new Button(this);
+                  b4.setText("4. Start Overlay");
+                  b4.setOnClickListener(v -> {
                       if (!Settings.canDrawOverlays(MainActivity.this)) {
                           Toast.makeText(this, "Grant overlay first", Toast.LENGTH_SHORT).show();
                           return;
@@ -579,30 +617,22 @@ jobs:
                       }
                       startForegroundService(new Intent(this, OverlayService.class));
                   });
-                  layout.addView(b3);
-
-                  Button b4 = new Button(this);
-                  b4.setText("4. Stop Overlay");
-                  b4.setOnClickListener(v ->
-                      stopService(new Intent(this, OverlayService.class)));
                   layout.addView(b4);
+
+                  Button b5 = new Button(this);
+                  b5.setText("5. Stop Overlay");
+                  b5.setOnClickListener(v ->
+                      stopService(new Intent(this, OverlayService.class)));
+                  layout.addView(b5);
 
                   TextView help = new TextView(this);
                   help.setText("\nHow to use:\n" +
-                      "1. Grant both permissions above\n" +
-                      "2. Start overlay\n" +
-                      "3. Open your game\n" +
-                      "4. '+ Add Key' -> key code daalo (Space=62, A=29, Shift=59)\n" +
-                      "5. Button ko drag karke game button ke upar rakho\n" +
-                      "6. 'Play Mode' toggle karo\n" +
-                      "7. Ab keyboard se mapped key dabao -> screen tap hoga\n\n" +
-                      "Common keycodes:\n" +
-                      "Space=62, Enter=66, Shift=59\n" +
-                      "A=29, B=30, C=31, D=32, E=33, F=34\n" +
-                      "1=8, 2=9, 3=10, 4=11, 5=12\n\n" +
-                      "Warning: Free Fire / BGMI jaise games\n" +
-                      "keymapper ko cheat maan kar account ban kar sakte hain.\n" +
-                      "Apne risk pe use karo.");
+                      "1. Grant Overlay Permission\n" +
+                      "2. Enable Accessibility Service\n" +
+                      "3. If Accessibility is greyed out (Not working), go to App Info -> 3 dots -> Allow restricted settings\n" +
+                      "4. Start overlay, open game, add key (Space=62, A=29, Shift=59)\n" +
+                      "5. Drag button over game control, switch to Play Mode\n\n" +
+                      "Warning: Free Fire / BGMI jaise games keymapper ko cheat maan kar account ban kar sakte hain. Apne risk pe use karo.");
                   help.setTextSize(13f);
                   layout.addView(help);
 
@@ -617,6 +647,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: KeyMapper-APK
+          name: KeyMapper-APK-Fixed
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
